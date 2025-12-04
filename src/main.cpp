@@ -1,7 +1,10 @@
+#include <algorithm>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 struct Atom {
@@ -20,6 +23,86 @@ struct MoleculeGraph {
     std::vector<Bond> bonds;
     std::vector<std::vector<int>> adjacency; // adjacency list of atom indices (1-based)
 };
+
+int atomic_number(const std::string &symbol) {
+    static const std::unordered_map<std::string, int> kAtomicNumbers = {
+        {"H", 1},   {"He", 2},  {"Li", 3},  {"Be", 4},  {"B", 5},   {"C", 6},
+        {"N", 7},   {"O", 8},   {"F", 9},   {"Ne", 10}, {"Na", 11}, {"Mg", 12},
+        {"Al", 13}, {"Si", 14}, {"P", 15}, {"S", 16},  {"Cl", 17}, {"Ar", 18},
+        {"K", 19},  {"Ca", 20}, {"Sc", 21}, {"Ti", 22}, {"V", 23},  {"Cr", 24},
+        {"Mn", 25}, {"Fe", 26}, {"Co", 27}, {"Ni", 28}, {"Cu", 29}, {"Zn", 30},
+        {"Ga", 31}, {"Ge", 32}, {"As", 33}, {"Se", 34}, {"Br", 35}, {"Kr", 36},
+        {"Rb", 37}, {"Sr", 38}, {"Y", 39},  {"Zr", 40}, {"Nb", 41}, {"Mo", 42},
+        {"Tc", 43}, {"Ru", 44}, {"Rh", 45}, {"Pd", 46}, {"Ag", 47}, {"Cd", 48},
+        {"In", 49}, {"Sn", 50}, {"Sb", 51}, {"Te", 52}, {"I", 53},  {"Xe", 54},
+        {"Cs", 55}, {"Ba", 56}, {"La", 57}, {"Ce", 58}, {"Pr", 59}, {"Nd", 60},
+        {"Pm", 61}, {"Sm", 62}, {"Eu", 63}, {"Gd", 64}, {"Tb", 65}, {"Dy", 66},
+        {"Ho", 67}, {"Er", 68}, {"Tm", 69}, {"Yb", 70}, {"Lu", 71}, {"Hf", 72},
+        {"Ta", 73}, {"W", 74},  {"Re", 75}, {"Os", 76}, {"Ir", 77}, {"Pt", 78},
+        {"Au", 79}, {"Hg", 80}, {"Tl", 81}, {"Pb", 82}, {"Bi", 83}, {"Po", 84},
+        {"At", 85}, {"Rn", 86}, {"Fr", 87}, {"Ra", 88}, {"Ac", 89}, {"Th", 90},
+        {"Pa", 91}, {"U", 92},  {"Np", 93}, {"Pu", 94}, {"Am", 95}, {"Cm", 96},
+        {"Bk", 97}, {"Cf", 98}, {"Es", 99}, {"Fm", 100}, {"Md", 101}, {"No", 102},
+        {"Lr", 103}, {"Rf", 104}, {"Db", 105}, {"Sg", 106}, {"Bh", 107}, {"Hs", 108},
+        {"Mt", 109}, {"Ds", 110}, {"Rg", 111}, {"Cn", 112}, {"Nh", 113}, {"Fl", 114},
+        {"Mc", 115}, {"Lv", 116}, {"Ts", 117}, {"Og", 118}};
+
+    auto it = kAtomicNumbers.find(symbol);
+    if (it == kAtomicNumbers.end()) {
+        return 0;
+    }
+    return it->second;
+}
+
+std::string format_atom_for_canonical(const Atom &atom) {
+    int number = atomic_number(atom.element);
+    if (number > 0) {
+        std::ostringstream oss;
+        oss << 'Z' << std::setw(3) << std::setfill('0') << number;
+        return oss.str();
+    }
+    return "EL:" + atom.element;
+}
+
+std::string canonical_subgraph_string(const MoleculeGraph &graph,
+                                      const std::vector<int> &edge_indices) {
+    std::vector<std::string> encoded_edges;
+    encoded_edges.reserve(edge_indices.size());
+
+    for (int edge_index : edge_indices) {
+        if (edge_index <= 0 || static_cast<std::size_t>(edge_index) > graph.bonds.size()) {
+            throw std::runtime_error("Edge index is out of range when encoding subgraph.");
+        }
+
+        const Bond &bond = graph.bonds[static_cast<std::size_t>(edge_index) - 1];
+        if (bond.from <= 0 || bond.to <= 0 ||
+            static_cast<std::size_t>(bond.from) > graph.atoms.size() ||
+            static_cast<std::size_t>(bond.to) > graph.atoms.size()) {
+            throw std::runtime_error("Bond references an atom index outside the allowed range.");
+        }
+
+        std::string left = format_atom_for_canonical(graph.atoms[static_cast<std::size_t>(bond.from) - 1]);
+        std::string right = format_atom_for_canonical(graph.atoms[static_cast<std::size_t>(bond.to) - 1]);
+
+        if (right < left) {
+            std::swap(left, right);
+        }
+
+        encoded_edges.push_back(left + "-" + right + ":" + std::to_string(bond.order));
+    }
+
+    std::sort(encoded_edges.begin(), encoded_edges.end());
+
+    std::ostringstream canonical;
+    for (std::size_t i = 0; i < encoded_edges.size(); ++i) {
+        if (i > 0) {
+            canonical << '|';
+        }
+        canonical << encoded_edges[i];
+    }
+
+    return canonical.str();
+}
 
 std::vector<std::vector<int>> enumerate_connected_subgraphs(const MoleculeGraph &graph) {
     std::vector<std::vector<int>> results;
@@ -82,7 +165,8 @@ void print_connected_subgraphs(const MoleculeGraph &graph) {
         for (int edge_index : subgraphs[i]) {
             std::cout << ' ' << edge_index;
         }
-        std::cout << '\n';
+        std::cout << "\n    Canonical: "
+                  << canonical_subgraph_string(graph, subgraphs[i]) << '\n';
     }
 }
 
