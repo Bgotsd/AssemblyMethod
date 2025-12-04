@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 struct Atom {
@@ -159,14 +160,46 @@ std::vector<std::vector<int>> enumerate_connected_subgraphs(const MoleculeGraph 
 
 void print_connected_subgraphs(const MoleculeGraph &graph) {
     const auto subgraphs = enumerate_connected_subgraphs(graph);
-    std::cout << "Connected edge subgraphs: " << subgraphs.size() << '\n';
+    std::vector<std::string> canonical_signatures;
+    canonical_signatures.reserve(subgraphs.size());
+
+    std::unordered_map<std::string, int> multiplicity;
+    for (const auto &edges : subgraphs) {
+        std::string signature = canonical_subgraph_string(graph, edges);
+        canonical_signatures.push_back(signature);
+        ++multiplicity[signature];
+    }
+
+    std::unordered_set<std::string> printed;
+    std::size_t repeated_fragments = 0;
+    for (const auto &entry : multiplicity) {
+        if (entry.second >= 2) {
+            ++repeated_fragments;
+        }
+    }
+
+    std::cout << "Connected edge subgraphs (total): " << subgraphs.size() << '\n';
+    std::cout << "Fragments with multiplicity >= 2: " << repeated_fragments << '\n';
+
+    std::size_t fragment_index = 0;
     for (std::size_t i = 0; i < subgraphs.size(); ++i) {
-        std::cout << "  Subgraph " << (i + 1) << ':';
+        const std::string &signature = canonical_signatures[i];
+        auto count = multiplicity[signature];
+        if (count < 2 || printed.count(signature) > 0) {
+            continue;
+        }
+
+        printed.insert(signature);
+        ++fragment_index;
+
+        std::cout << "  Fragment " << fragment_index << " (multiplicity " << count
+                  << "):\n";
+        std::cout << "    Canonical: " << signature << '\n';
+        std::cout << "    Example edges:";
         for (int edge_index : subgraphs[i]) {
             std::cout << ' ' << edge_index;
         }
-        std::cout << "\n    Canonical: "
-                  << canonical_subgraph_string(graph, subgraphs[i]) << '\n';
+        std::cout << '\n';
     }
 }
 
