@@ -1,10 +1,7 @@
-#include <algorithm>
-#include <cctype>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <utility>
 #include <vector>
 
 struct Atom {
@@ -26,19 +23,29 @@ struct MoleculeGraph {
 
 int parse_fixed_width_int(const std::string &line, std::size_t offset, std::size_t width) {
     if (line.size() < offset + width) {
-        throw std::runtime_error("Counts line is too short to parse expected field.");
+        throw std::runtime_error("Line is too short to parse expected integer field.");
     }
     std::string field = line.substr(offset, width);
-    return std::stoi(field);
+
+    try {
+        return std::stoi(field);
+    } catch (const std::exception &) {
+        throw std::runtime_error("Failed to parse integer value from field: '" + field + "'.");
+    }
 }
 
-std::vector<std::string> split_tokens(const std::string &line) {
-    std::vector<std::string> tokens;
-    std::istringstream iss(line);
-    for (std::string token; iss >> token;) {
-        tokens.push_back(token);
+std::string parse_fixed_width_string(const std::string &line, std::size_t offset, std::size_t width) {
+    if (line.size() < offset + width) {
+        throw std::runtime_error("Line is too short to parse expected string field.");
     }
-    return tokens;
+    std::string field = line.substr(offset, width);
+
+    std::size_t first = field.find_first_not_of(' ');
+    if (first == std::string::npos) {
+        return "";
+    }
+    std::size_t last = field.find_last_not_of(' ');
+    return field.substr(first, last - first + 1);
 }
 
 MoleculeGraph parse_mol_v2000(std::istream &input) {
@@ -73,11 +80,16 @@ MoleculeGraph parse_mol_v2000(std::istream &input) {
     // Atom block starts at line 4
     for (int i = 0; i < atom_count; ++i) {
         const std::string &atom_line = lines[4 + i];
-        auto tokens = split_tokens(atom_line);
-        if (tokens.size() < 4) {
-            throw std::runtime_error("Atom line is malformed: " + atom_line);
+
+        if (atom_line.size() < 34) {
+            throw std::runtime_error("Atom line is too short: " + atom_line);
         }
-        std::string element = tokens[3];
+
+        std::string element = parse_fixed_width_string(atom_line, 30, 4);
+        if (element.empty()) {
+            throw std::runtime_error("Atom symbol is missing in line: " + atom_line);
+        }
+
         graph.atoms.push_back({i + 1, element});
     }
 
@@ -85,14 +97,10 @@ MoleculeGraph parse_mol_v2000(std::istream &input) {
     std::size_t bond_start = 4 + static_cast<std::size_t>(atom_count);
     for (int i = 0; i < bond_count; ++i) {
         const std::string &bond_line = lines[bond_start + static_cast<std::size_t>(i)];
-        auto tokens = split_tokens(bond_line);
-        if (tokens.size() < 3) {
-            throw std::runtime_error("Bond line is malformed: " + bond_line);
-        }
 
-        int from = std::stoi(tokens[0]);
-        int to = std::stoi(tokens[1]);
-        int order = std::stoi(tokens[2]);
+        int from = parse_fixed_width_int(bond_line, 0, 3);
+        int to = parse_fixed_width_int(bond_line, 3, 3);
+        int order = parse_fixed_width_int(bond_line, 6, 3);
 
         if (from <= 0 || to <= 0 || from > atom_count || to > atom_count) {
             throw std::runtime_error("Bond references an atom index outside the allowed range.");
