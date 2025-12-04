@@ -25,6 +25,12 @@ struct MoleculeGraph {
     std::vector<std::vector<int>> adjacency; // adjacency list of atom indices (1-based)
 };
 
+struct RepeatedFragment {
+    std::string canonical;
+    std::vector<int> edge_indices;
+    int multiplicity{};
+};
+
 int atomic_number(const std::string &symbol) {
     static const std::unordered_map<std::string, int> kAtomicNumbers = {
         {"H", 1},   {"He", 2},  {"Li", 3},  {"Be", 4},  {"B", 5},   {"C", 6},
@@ -158,8 +164,9 @@ std::vector<std::vector<int>> enumerate_connected_subgraphs(const MoleculeGraph 
     return results;
 }
 
-void print_connected_subgraphs(const MoleculeGraph &graph) {
+std::vector<RepeatedFragment> collect_repeated_fragments(const MoleculeGraph &graph) {
     const auto subgraphs = enumerate_connected_subgraphs(graph);
+
     std::vector<std::string> canonical_signatures;
     canonical_signatures.reserve(subgraphs.size());
 
@@ -170,37 +177,122 @@ void print_connected_subgraphs(const MoleculeGraph &graph) {
         ++multiplicity[signature];
     }
 
-    std::unordered_set<std::string> printed;
-    std::size_t repeated_fragments = 0;
-    for (const auto &entry : multiplicity) {
-        if (entry.second >= 2) {
-            ++repeated_fragments;
-        }
-    }
-
-    std::cout << "Connected edge subgraphs (total): " << subgraphs.size() << '\n';
-    std::cout << "Fragments with multiplicity >= 2: " << repeated_fragments << '\n';
-
-    std::size_t fragment_index = 0;
+    std::vector<RepeatedFragment> fragments;
+    std::unordered_set<std::string> emitted;
     for (std::size_t i = 0; i < subgraphs.size(); ++i) {
         const std::string &signature = canonical_signatures[i];
         auto count = multiplicity[signature];
-        if (count < 2 || printed.count(signature) > 0) {
+        if (count < 2 || emitted.count(signature) > 0) {
             continue;
         }
 
-        printed.insert(signature);
-        ++fragment_index;
+        std::vector<int> edges = subgraphs[i];
+        std::sort(edges.begin(), edges.end());
 
-        std::cout << "  Fragment " << fragment_index << " (multiplicity " << count
+        fragments.push_back({signature, edges, count});
+        emitted.insert(signature);
+    }
+
+    return fragments;
+}
+
+void print_repeated_fragments(const std::vector<RepeatedFragment> &fragments) {
+    std::cout << "Fragments with multiplicity >= 2: " << fragments.size() << '\n';
+    for (std::size_t i = 0; i < fragments.size(); ++i) {
+        const auto &fragment = fragments[i];
+        std::cout << "  Fragment " << (i + 1) << " (multiplicity " << fragment.multiplicity
                   << "):\n";
-        std::cout << "    Canonical: " << signature << '\n';
+        std::cout << "    Canonical: " << fragment.canonical << '\n';
         std::cout << "    Example edges:";
-        for (int edge_index : subgraphs[i]) {
+        for (int edge_index : fragment.edge_indices) {
             std::cout << ' ' << edge_index;
         }
         std::cout << '\n';
     }
+}
+
+bool is_subset(const std::vector<int> &subset, const std::vector<int> &superset) {
+    std::size_t i = 0;
+    std::size_t j = 0;
+    while (i < subset.size() && j < superset.size()) {
+        if (subset[i] == superset[j]) {
+            ++i;
+            ++j;
+        } else if (subset[i] > superset[j]) {
+            ++j;
+        } else {
+            return false;
+        }
+    }
+    return i == subset.size();
+}
+
+std::vector<int> subtract_edges(const std::vector<int> &source, const std::vector<int> &to_remove) {
+    std::vector<int> remaining;
+    remaining.reserve(source.size());
+
+    std::size_t i = 0;
+    std::size_t j = 0;
+    while (i < source.size()) {
+        if (j < to_remove.size() && source[i] == to_remove[j]) {
+            ++i;
+            ++j;
+        } else if (j < to_remove.size() && source[i] > to_remove[j]) {
+            ++j;
+        } else {
+            remaining.push_back(source[i]);
+            ++i;
+        }
+    }
+
+    return remaining;
+}
+
+int compute_min_ma(const MoleculeGraph &graph, const std::vector<int> &subgraph_edges,
+                   const std::vector<RepeatedFragment> &fragments,
+                   std::unordered_map<std::string, int> &memo) {
+    std::vector<int> sorted_edges = subgraph_edges;
+    std::sort(sorted_edges.begin(), sorted_edges.end());
+
+    std::string key = canonical_subgraph_string(graph, sorted_edges);
+    auto it = memo.find(key);
+    if (it != memo.end()) {
+        return it->second;
+    }
+
+    int naive_ma = static_cast<int>(sorted_edges.size());
+    if (!sorted_edges.empty()) {
+        naive_ma = static_cast<int>(sorted_edges.size()) - 1;
+    }
+
+    int best_ma = naive_ma;
+
+    for (const auto &fragment : fragments) {
+        if (fragment.edge_indices.size() >= sorted_edges.size()) {
+            continue; // cannot split or would be identical
+        }
+
+        if (!is_subset(fragment.edge_indices, sorted_edges)) {
+            continue;
+        }
+
+        int fragment_ma = compute_min_ma(graph, fragment.edge_indices, fragments, memo);
+
+        std::vector<int> remaining = subtract_edges(sorted_edges, fragment.edge_indices);
+        int remaining_ma = 0;
+        int combined_cost = fragment_ma;
+        if (!remaining.empty()) {
+            remaining_ma = compute_min_ma(graph, remaining, fragments, memo);
+            combined_cost = fragment_ma + remaining_ma + 1;
+        }
+
+        if (combined_cost < best_ma) {
+            best_ma = combined_cost;
+        }
+    }
+
+    memo[key] = best_ma;
+    return best_ma;
 }
 
 int parse_fixed_width_int(const std::string &line, std::size_t offset, std::size_t width) {
@@ -324,7 +416,18 @@ int main() {
     try {
         MoleculeGraph graph = parse_mol_v2000(std::cin);
         print_graph(graph);
-        print_connected_subgraphs(graph);
+        const auto fragments = collect_repeated_fragments(graph);
+        print_repeated_fragments(fragments);
+
+        std::vector<int> whole_graph_edges;
+        whole_graph_edges.reserve(graph.bonds.size());
+        for (std::size_t i = 0; i < graph.bonds.size(); ++i) {
+            whole_graph_edges.push_back(static_cast<int>(i) + 1);
+        }
+
+        std::unordered_map<std::string, int> memo;
+        int minimal_ma = compute_min_ma(graph, whole_graph_edges, fragments, memo);
+        std::cout << "Minimal MA (split-branch): " << minimal_ma << '\n';
     } catch (const std::exception &ex) {
         std::cerr << "Failed to parse molfile: " << ex.what() << '\n';
         return 1;
