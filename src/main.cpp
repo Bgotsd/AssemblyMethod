@@ -21,6 +21,71 @@ struct MoleculeGraph {
     std::vector<std::vector<int>> adjacency; // adjacency list of atom indices (1-based)
 };
 
+std::vector<std::vector<int>> enumerate_connected_subgraphs(const MoleculeGraph &graph) {
+    std::vector<std::vector<int>> results;
+    if (graph.bonds.empty()) {
+        return results;
+    }
+
+    const std::size_t atom_count = graph.atoms.size();
+
+    auto dfs = [&](auto &&self, int last_edge, std::vector<int> &edge_set,
+                   std::vector<bool> &active_atoms) -> void {
+        for (std::size_t next = static_cast<std::size_t>(last_edge + 1);
+             next < graph.bonds.size(); ++next) {
+            const Bond &bond = graph.bonds[next];
+
+            bool touches_existing = active_atoms[bond.from] || active_atoms[bond.to];
+            if (!touches_existing) {
+                continue; // adding this edge would create a disconnected component
+            }
+
+            bool added_from = !active_atoms[bond.from];
+            bool added_to = !active_atoms[bond.to];
+
+            active_atoms[bond.from] = true;
+            active_atoms[bond.to] = true;
+            edge_set.push_back(static_cast<int>(next) + 1); // store 1-based edge index
+
+            results.push_back(edge_set);
+            self(self, static_cast<int>(next), edge_set, active_atoms);
+
+            edge_set.pop_back();
+            if (added_from) {
+                active_atoms[bond.from] = false;
+            }
+            if (added_to) {
+                active_atoms[bond.to] = false;
+            }
+        }
+    };
+
+    for (std::size_t i = 0; i < graph.bonds.size(); ++i) {
+        const Bond &start_bond = graph.bonds[i];
+        std::vector<bool> active_atoms(atom_count + 1, false); // 1-based atoms
+        active_atoms[start_bond.from] = true;
+        active_atoms[start_bond.to] = true;
+
+        std::vector<int> edge_set = {static_cast<int>(i) + 1};
+        results.push_back(edge_set);
+        dfs(dfs, static_cast<int>(i), edge_set, active_atoms);
+    }
+
+    return results;
+}
+
+void print_connected_subgraphs(const MoleculeGraph &graph) {
+    const auto subgraphs = enumerate_connected_subgraphs(graph);
+    std::cout << "Connected edge subgraphs: " << subgraphs.size() << '\n';
+    for (std::size_t i = 0; i < subgraphs.size(); ++i) {
+        std::cout << "  Subgraph " << (i + 1) << ':';
+        for (int edge_index : subgraphs[i]) {
+            std::cout << ' ' << edge_index;
+        }
+        std::cout << '\n';
+    }
+}
+
 int parse_fixed_width_int(const std::string &line, std::size_t offset, std::size_t width) {
     if (line.size() < offset + width) {
         throw std::runtime_error("Line is too short to parse expected integer field.");
@@ -142,6 +207,7 @@ int main() {
     try {
         MoleculeGraph graph = parse_mol_v2000(std::cin);
         print_graph(graph);
+        print_connected_subgraphs(graph);
     } catch (const std::exception &ex) {
         std::cerr << "Failed to parse molfile: " << ex.what() << '\n';
         return 1;
